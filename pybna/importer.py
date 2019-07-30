@@ -2,6 +2,7 @@ import yaml
 from urllib import urlretrieve
 import tempfile
 import os
+import time
 from shutil import copy
 import geopandas as gpd
 import pandas as pd
@@ -11,6 +12,7 @@ import osmnx as ox
 import random
 import string
 from shapely.geometry import shape
+from overpass import MultipleRequestsError, ServerLoadError
 
 from conf import Conf
 from dbutils import DBUtils
@@ -691,7 +693,19 @@ class Importer(DBUtils,Conf):
                 raise ValueError("Table %s.%s already exists" % (schema,table))
             tags = d["tags_query"]
             print("Copying {} to database".format(table))
-            ways, nodes = self._osm_destinations_from_overpass(min_lon,min_lat,max_lon,max_lat,tags)
+            while True:
+                try:
+                    ways, nodes = self._osm_destinations_from_overpass(min_lon,min_lat,max_lon,max_lat,tags)
+                except MultipleRequestsError:
+                    print("OSM server load exceeded, pausing for 10 seconds to try again")
+                    time.sleep(10)
+                    continue
+                except ServerLoadError:
+                    print("OSM server load exceeded, pausing for 10 seconds to try again")
+                    time.sleep(10)
+                    continue
+                break
+
 
             # set attributes
             attributes = set()
