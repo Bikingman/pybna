@@ -24,6 +24,55 @@ class Destinations(DBUtils):
         self.srid = None
 
 
+    def aggregate_score(self,output_table,scores_table,overwrite=False,dry=None):
+        """
+        Computes a population-weighted aggregate BNA score for the entire study
+        area.
+
+        args:
+        output_table -- table to create (optionally schema-qualified)
+        scores_table -- a table containing block-level BNA scores
+        overwrite -- overwrite a pre-existing table
+        dry -- a path to save SQL statements to instead of executing in DB
+        """
+        # make a copy of sql substitutes
+        subs = dict(self.sql_subs)
+
+        # output table
+        schema, output_table = self.parse_table_name(output_table)
+        subs["aggregate_table"] = sql.Identifier(output_table)
+        if schema is None:
+            schema = self.get_default_schema()
+        subs["aggregate_schema"] = sql.Identifier(schema)
+
+        # scores table
+        scores_schema, scores_table = self.parse_table_name(scores_table)
+        subs["scores_table"] = sql.Identifier(scores_table)
+        if scores_schema is None:
+            scores_schema = self.get_default_schema()
+        subs["scores_schema"] = sql.Identifier(scores_schema)
+
+        # queries
+        conn = self.get_db_connection()
+        if dry is None:
+            if overwrite:
+                self.drop_table(table=output_table,schema=schema,conn=conn)
+            elif self.table_exists(output_table,subs["aggregate_schema"].as_string(conn)):
+                raise psycopg2.ProgrammingError("Table {}.{} already exists".format(subs["aggregate_schema"].as_string(conn),output_table)))
+
+        self._run_sql_script("create_table.sql",subs,["sql","destinations","aggregate"],dry=dry,conn=conn)
+
+        for cat in self.config.bna.destinations:
+            self._aggregate_category_score(cat,subs,conn=conn,dry=dry)
+
+        subs["category_name"] = sql.Literal("Overall score")
+        subs["category_score_col"] = sql.Identifier("overall_score")
+        self._run_sql_script("aggregate_category.sql",subs,["sql","destinations","aggregate"],dry=dry,conn=conn)
+
+        conn.commit()
+        conn.close()
+
+
     def score_destinations(self,output_table,with_geoms=False,overwrite=False,dry=None):
         """
         Creates a new db table of scores for each block
@@ -380,6 +429,28 @@ class Destinations(DBUtils):
                 maxpoints += self._get_maxpoints(subcat)
         else:
             return node["weight"]
+
+
+    def _aggregate_category_score(self,node,subs,dry=None,conn=None):
+        """
+        Aggregates the BNA score for the given category. Operates recursively on
+        any subcategories.
+
+        args
+        node -- the current branch of the destination tree
+        subs -- a dictionary of SQL substitutions
+        dry -- a path to save SQL statements to instead of executing in DB
+        conn -- a psycopg2 connection object
+        """
+        if "subcats" in node:
+            for subcat in node["subcats"]:
+                self._aggregate_category_score(subcat,subs,dry,conn)
+
+        if "maxpoints" in node:
+            subs = dict(subs)
+            subs["category_name"] = sql.Identifier(node.name)
+            subs["category_score_col"] = sql.Identifier(node.name + "_score")
+            self._run_sql_script("aggregate_category.sql",subs,["sql","destinations","aggregate"],dry=dry,conn=conn)
 
 
     def _copy_block_geoms(self,conn,subs,dry=None):
