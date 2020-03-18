@@ -120,7 +120,8 @@ class Importer(Conf):
 
 
     def import_census_blocks(self,fips=None,url=None,fpath=None,table=None,
-                             keep_case=False,columns=None,id=None,geom=None,
+                             keep_case=False,keep_water=False,
+                             columns=None,id=None,geom=None,
                              srid=None,boundary_file=None,overwrite=False):
         """
         Retrieves census block features and saves them to the
@@ -135,6 +136,7 @@ class Importer(Conf):
         fpath -- path to a file
         table -- the table name to save blocks to (if none use config) (must be schema-qualified)
         keep_case -- whether to prevent column names from being converted to lower case
+        keep_water -- whether to omit census blocks that are associated with water only areas
         columns -- list of columns in the dataset to keep (if none keeps all)
         id -- name for the id/primary key column (if none use config)
         geom -- name for the geometry column (if none use config)
@@ -209,6 +211,11 @@ class Importer(Conf):
         # filter to blocks within the boundary
         print("Filtering blocks to boundary")
         blocks = blocks[blocks.intersects(boundary.unary_union)]
+
+        # filter out blocks associated with water
+        if keep_water is False:
+            print("Filtering out water")
+            blocks = blocks[blocks.blockce.str[0] != '0']
 
         # copy data to db
         print("Copying blocks to database")
